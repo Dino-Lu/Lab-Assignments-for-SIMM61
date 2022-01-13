@@ -1,0 +1,253 @@
+---
+title: 'Lab Report #4'
+author: "Jinxuan Lu"
+date: "2022/1/14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#loading packages & import data
+
+```{r}
+library(lavaan) # for SEM fit and model functions
+library(semPlot) # for semPaths()
+library(semptools) # for set_sem_layout
+library(semTools)
+library(psych)
+library(tidyverse) # for tidy code
+library(CompQuadForm) # for mvnorm.kur.test and mvnorm.skew.test (prerequisite) 
+library(ICS) # for mvnorm.kur.test and mvnorm.skew.test
+
+library(psychTools)
+my_data = holzinger.swineford
+View(my_data)
+
+summary(my_data)
+describe(my_data)
+
+```
+
+
+#Task 1
+#Model specification
+```{r}
+Model_A <- 
+"
+    Visper =~ t01_visperc + t02_cubes + t03_frmbord + t04_lozenges
+    Verbal =~ t06_paracomp + t07_sentcomp + t09_wordmean
+    Procespd =~ t10_addition + t12_countdot + t13_sccaps      
+"
+#the co-variances between factors are automatically specified for all latent factors
+
+#fitting the model
+fit_A <- sem(Model_A, data = my_data)
+
+#model visualization
+semPaths(fit_A)
+
+#model results
+summary(fit_A)
+
+
+```
+
+
+#Identification of the Model
+```{r}
+#counting degrees of freedom
+#10*(10+1)/2 = 55
+#55-23 = 32, this equals to the number got from summary function
+#df > 0, so it's fine
+
+#model constraints and scaling the model
+#fixed parameters = reference/marker parameters
+#basically, we don't need to constrain parameters, cause the df is fine enough
+
+```
+
+#Model estimation
+```{r}
+#Maximum Likelihood estimator 
+##check assumptions of the ML estimator: multivariate normal distribution:
+
+mvnorm.kur.test(my_data[,c("t01_visperc", "t02_cubes", "t03_frmbord", "t04_lozenges", "t06_paracomp", "t07_sentcomp", "t09_wordmean", "t10_addition", "t12_countdot", "t13_sccaps")])
+
+mvnorm.skew.test(my_data[,c("t01_visperc", "t02_cubes", "t03_frmbord", "t04_lozenges", "t06_paracomp", "t07_sentcomp", "t09_wordmean", "t10_addition", "t12_countdot", "t13_sccaps")])
+#the p-value of these tests are both lower than 0.05, which indicates the violation of the multivariate normality assumption. And these variables are endogenous, so I need to use bootstrapped ML solution
+
+#solution of the ML estimator
+summary(fit_A)
+
+#bootstrapped ML solution for robust SE and test statistics
+fit_A_boot <- sem(Model_A, data = my_data, se = "bootstrap", test = "bootstrap")
+summary(fit_A_boot, fit.measures = T)
+
+```
+
+#Interpreting model fit
+```{r}
+summary(fit_A_boot, fit.measures = T)
+
+#Chisq = 87.964, p-value (Chi-square)=0, df=32, p-value (Bollen-Stine bootstrap) = 0
+
+#Robust Tucker-Lewis Index (TLI)=0.916
+
+#Robust Comparative Fit Index (CFI)=0.940
+
+#Standardized Root Mean Square Residual (SRMR) = 0.062
+
+#Root Mean Square Error of Approximation (RMSEA) = 0.076
+  #90% confidence interval - lower                     0.057
+  #90% confidence interval - upper                     0.095
+  #P-value RMSEA <= 0.05                               0.012
+
+```
+
+#Interpreting the estimates
+```{r}
+summary(fit_A_boot, fit.measures = T)
+
+semPaths(fit_A_boot, whatLabels = "est")
+
+summary(fit_A_boot, standardized = T, rsquare = T)  #In this solution lavaan automatically shifts the fixed parameter to the variance of the exogenous factors, so we can get comparable estimates for all latent factor loadings in the same model
+
+standardizedsolution(fit_A_boot, type = "std.all")
+
+semPaths(fit_A_boot, whatLabels = "std")
+
+```
+
+
+#Task 2
+#Model specification
+```{r}
+#specify a new model
+Model_B <- 
+"
+    Visper =~ t01_visperc + t02_cubes + t03_frmbord + t04_lozenges
+    Verbal =~ t06_paracomp + t07_sentcomp + t09_wordmean
+    Procespd =~ t10_addition + t12_countdot + t13_sccaps
+    t10_addition ~~ t12_countdot
+"
+
+#fitting the model
+fit_B <- sem(Model_B, data = my_data)
+
+#model visualization
+semPaths(fit_B)
+
+#model results
+summary(fit_B)
+
+	
+```
+
+#Identification of the Model
+#Model estimation
+#Interpreting model fit
+```{r}
+#counting degrees of freedom
+#10*(10+1)/2 = 55
+#55-24 = 31, this equals to the number got from summary function
+#df > 0, so it's fine
+
+#since there is still a violation of normal distribution, I will use bootstrapped ML solution
+#bootstrapped ML solution for robust SE and test statistics
+fit_B_boot <- sem(Model_B, data = my_data, se = "bootstrap", test = "bootstrap")
+summary(fit_B_boot, fit.measures = T)
+
+
+#Chisq = 56.759, p-value (Chi-square)=0.003, df=31, p-value (Bollen-Stine bootstrap) = 0.009
+
+#Robust Tucker-Lewis Index (TLI)=0.960
+
+#Robust Comparative Fit Index (CFI)=0.972
+
+#Standardized Root Mean Square Residual (SRMR) = 0.045
+
+#Root Mean Square Error of Approximation (RMSEA) = 0.053
+  #90% confidence interval - lower                     0.030
+  #90% confidence interval - upper                     0.074
+  #P-value RMSEA <= 0.05                               0.397
+
+```
+
+#Interpreting the estimates
+```{r}
+summary(fit_B_boot, fit.measures = T)
+
+semPaths(fit_B_boot, whatLabels = "est")
+
+summary(fit_B_boot, standardized = T, rsquare = T)  #In this solution lavaan automatically shifts the fixed parameter to the variance of the exogenous factors, so we can get comparable estimates for all latent factor loadings in the same model
+
+standardizedsolution(fit_B_boot, type = "std.all")
+
+semPaths(fit_B_boot, whatLabels = "std", edge.label.cex = 0.9)
+
+
+```
+
+#comparing two models: according to AIC, BIC...Model_B is better
+```{r}
+summary(fit_A_boot, fit.measures = T)
+
+#Akaike (AIC)                                8296.856
+#Bayesian (BIC)                              8382.120
+#Sample-size adjusted Bayesian (SABIC)       8309.177
+
+#Comparative Fit Index (CFI)                    0.940
+
+```
+
+```{r}
+summary(fit_B_boot, fit.measures = T)
+
+#Akaike (AIC)                                8267.652 (the smaller, the better)
+#Bayesian (BIC)                              8356.623
+#Sample-size adjusted Bayesian (SABIC)       8280.508
+
+#Comparative Fit Index (CFI)                    0.972 (the higher the better)
+
+```
+
+```{r}
+anova(fit_B_boot, fit_A_boot)
+
+#Chisq for Model_A:    87.964
+#Chisq for Model_B:    56.759    (the lower the better)
+
+```
+
+#Task 3: the mediation model -- path analysis
+```{r}
+model_mediation =
+  "
+  t13_sccaps ~ c * t01_visperc + b * t12_countdot
+  t12_countdot ~ a * t01_visperc
+             indirect := a*b
+             total := c + (a*b)
+"
+fit_mediation = sem(model_mediation, data = my_data)
+
+par(fit_mediation)
+
+summary(fit_mediation, fit.measures = T, standardized = T)
+
+semPaths(fit_mediation, fixedStyle = 1, label.scale=F, nCharNodes = 0,
+         sizeMan2=5, sizeMan=15, asize=3, edge.label.cex = 1, whatLabels = "std")
+
+#this means that there is an indirect effect of an independent variable, via an mediating variable, on the dependent variable
+
+#(unstandardized -> predicts scale-sensitive original variables)
+#(standardized -> solution using z-scored versions of variables)
+
+#So, when t01_visperc increases by 1 unit, the expected increase in the value of t13_sccaps is:
+#theoretically:
+# direct effect + indirect effect: 0.31 + 0.23*0.38 = 0.3974
+#total estimate from summary function: 0.394
+
+
+```
