@@ -1,0 +1,355 @@
+---
+title: "Lab Report #2"
+author: "Jinxuan Lu"
+date: "2022/01/14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#loading packages
+
+```{r}
+Sys.setenv(LANG="en")
+getwd()
+library(tidyverse)
+library(haven)
+library(dplyr)
+library(psych)
+library(knitr)
+library(lmtest) # for lrtest
+library(lmerTest)
+library(lme4) # fits mixed-effect models with lmer()
+library(cAIC4) # for cAIC	
+library(r2glmm) # for r2beta	
+library(MuMIn) # for r.squaredGLMM	
+library(influence.ME) # for influence
+library(lattice)  #for qqmath
+library(ggeffects)
+library(sjPlot)
+
+#custom function
+stdCoef.merMod <- function(object) {
+  sdy <- sd(getME(object, "y"))
+  sdx <- apply(getME(object, "X"), 2, sd)
+  sc <- fixef(object) * sdx/sdy
+  se.fixef <- coef(summary(object))[, "Std. Error"] 
+  se <- se.fixef * sdx/sdy
+  return(data.frame(stdcoef = sc, stdse = se))
+}
+```
+
+#import data
+```{r}
+data_surgeryA = read_csv("https://raw.githubusercontent.com/kekecsz/SIMM61-Course-materials/main/Home_assignment/surgery_data_1.csv")
+data_surgeryB = read_csv("https://raw.githubusercontent.com/kekecsz/SIMM61-Course-materials/main/Home_assignment/surgery_data_2.csv")
+
+#Data management; tidying up dataset, defining categorical variables as factors, re-coding factor levels
+data_surgeryA <- data_surgeryA %>% 	
+  mutate(ID = factor(ID),
+         sex = factor(sex),
+         hospital = factor(hospital))
+data_surgeryB <- data_surgeryB %>% 	
+  mutate(ID = factor(ID),
+         sex = factor(sex),
+         hospital = factor(hospital))
+
+data_surgeryA %>% summary()  #sex is coded as "female/male", but there is a "woman" in the data
+data_surgeryB %>% summary()  #dataset B is fine
+describe(data_surgeryA)
+describe(data_surgeryB)
+```
+
+#data management
+```{r}
+#replace "woman" with female & relevel to set reference category
+data_surgeryA <- data_surgeryA %>% 	
+  mutate(sex = replace(sex, sex == "woman", "female")) %>%
+  mutate(sex = fct_relevel(sex, "male"))
+
+data_surgeryB <- data_surgeryB %>% 	
+  mutate(sex = fct_relevel(sex, "male"))
+
+#look at the data
+View(data_surgeryA)
+View(data_surgeryB)
+describe(data_surgeryA)
+describe(data_surgeryB)
+summary(data_surgeryA)
+summary(data_surgeryB)
+
+#checking missing values
+sum(is.na(data_surgeryA))
+colSums(is.na(data_surgeryA))
+sum(is.na(data_surgeryB))
+colSums(is.na(data_surgeryB))
+
+
+#check the distribution of the response variable
+hist(data_surgeryA$pain)  # seems close to a normal distribution, which is good
+
+#check whether the data from within each hospital are more similar to each other than the data from different hospital: are they independent or correlated?
+boxplot(pain ~ hospital, data = data_surgeryA)  
+```
+
+
+#building mixed model & check the model
+```{r}
+##random intercept model
+mod_intA = lmer(pain ~ age + sex + STAI_trait + pain_cat + mindfulness + cortisol_serum + (1|hospital), data = data_surgeryA)
+
+#preparing for model diagnostics later
+data_surgeryA = data_surgeryA %>%
+  mutate(resid = residuals(mod_intA))
+
+random_effects = as.data.frame(ranef(mod_intA)[[1]])
+names(random_effects) = c("intercept")
+
+```
+
+#calculating the model coefficients and CI of the coefficients for fixed predictors
+```{r}
+#model fit indices: cAIC
+cAIC(mod_intA)$caic     #cAIC   621.4255
+
+#prediction error
+sum(residuals(mod_intA)^2)  #RSS 224.3138
+
+#marginal R squared with confidence intervals of the marginal R squared
+r2beta(mod_intA, method = "nsj", data = data_surgeryA)  #cortisol_serum, pain_cat, age's 95% CI not contain 0, meaning that these fixed effect items explain a significant portion of the variance of the outcome compared to the mean (the null model)
+
+#marginal and conditional R squared values
+r.squaredGLMM(mod_intA)  #marginal and conditional R squared values: 0.385 0.463
+#  (R^2 = 0.385 [95% CI = 0.301,0.488])
+
+#statistics related to the predictors:
+#model coefficients and p-values
+summary(mod_intA)   #the variance for hospital is 0.1748: 0.1748/(0.1748+1.2037) = 0.1268 = 13% 
+
+#confidence intervals for the model coefficients
+#the 95% confidence interval defines a range of values that you can be 95% certain contains the population mean
+confint(mod_intA) 
+
+# Standardized beta for each predictor:	
+#(Std.Beta coefficients are the coefficients that you would get if the variables in the regression were all converted to z-scores before running the analysis)
+stdCoef.merMod(mod_intA) 
+
+#getting a table including everything I need
+tab_model(mod_intA, p.val = "kr", show.std = TRUE, show.ci = 0.95)
+
+```
+
+
+##model diagnostics (not necessary for this assignment, just for learning)
+```{r}
+#checking influential outliers
+influence_observation = influence(mod_intA, obs = T)$alt.fixed 
+influence_group = influence(mod_intA, group = "hospital")$alt.fixed
+
+data_plot_inflience = as_tibble(influence_group) %>%
+    gather(colnames(influence_group), value = coefficient, key = predictor)
+data_plot_inflience %>%
+    ggplot() + aes(x = 1, y = coefficient, group = predictor) +
+    geom_violin() + geom_jitter(width = 0.2) + facet_wrap(~predictor,
+    scales = "free")
+#these plots do not indicate extreme influential cases
+```
+
+```{r}
+#checking normality
+#normality of all residuals
+qqmath(mod_intA, id = 0.05)   #normally distributed
+#or
+qqnorm(resid(mod_intA))
+qqline(resid(mod_intA))    #points fall nicely onto the line, which is good
+
+#normality of residuals within clusters
+ data_surgeryA %>%
+    ggplot() + aes(sample = resid) + stat_qq() + stat_qq_line() +
+    facet_wrap(~hospital, scales = "free")
+
+#normality of random effects
+qqmath(ranef(mod_intA))   #the points on the plot should roughly fit on a straight line
+
+random_effects %>%
+  ggplot() + aes(sample = intercept) + stat_qq() + stat_qq_line()
+
+random_effects %>%
+  ggplot() + aes(x = intercept) + geom_histogram()
+describe(random_effects$intercept)$skew  #0.009
+describe(random_effects$intercept)$kurtosis  #-1.099
+
+```
+
+```{r}
+#checking linearity
+#The linearity of the relationship of the fixed effect predictors and the outcome can be explored by plotting the scatterplot of the standardized residuals and the predicted values.
+plot(mod_intA, arg = "pearson")
+
+data_surgeryA %>%
+    ggplot() + aes(x = age, y = resid) + geom_point()
+data_surgeryA %>%
+    ggplot() + aes(x = sex, y = resid) + geom_point()
+data_surgeryA %>%
+    ggplot() + aes(x = STAI_trait, y = resid) + geom_point()
+data_surgeryA %>%
+    ggplot() + aes(x = pain_cat, y = resid) + geom_point()
+data_surgeryA %>%
+    ggplot() + aes(x = mindfulness, y = resid) + geom_point()
+data_surgeryA %>%
+    ggplot() + aes(x = cortisol_serum, y = resid) + geom_point()   #nonlinear relationship with the residuals
+
+```
+
+```{r}
+#checking homoscedasticity
+#if it is a funnel shape, it would indicate heteroscedasticity, but we don't see that in this plot
+plot(mod_intA, arg = "pearson")
+
+#we need to check for homoscedasticity across clusters as well
+homosced_mod = lm(resid^2 ~ hospital, data = data_surgeryA)
+summary(homosced_mod)    #the complete model F-test p-value = 0.2712 (If it is < 0.05, heteroscedasticity on the cluster level might be problematic)
+
+```
+
+```{r}
+#checking multicollinearity of the fixed effect predictors
+ pairs.panels(data_surgeryA[, c("age", "sex",
+    "STAI_trait", "pain_cat", "mindfulness", "cortisol_serum")], col = "red", lm = T)
+
+```
+
+
+#prediction on data B by using the model fitted from data A
+```{r}
+#using the model coefficients obtained on data file A to predict pain in data file B
+data_surgeryB_df = as_tibble(data_surgeryB)
+predictions = predict(mod_intA, newdata = data_surgeryB_df, allow.new.levels = TRUE)
+
+data_surgeryB_with_predicted = cbind(data_surgeryB_df, predictions)
+data_surgeryB_with_predicted
+View(data_surgeryB_with_predicted)
+
+#residual sum of squared differences (total amount of error when using the model)
+RSS = sum((data_surgeryB_with_predicted$pain - data_surgeryB_with_predicted$predictions)^2)
+RSS  #307.3396
+
+#the total sum of squared differences (total amount of error when only using mean of outcome variable)
+mod_mean <- lmer(pain ~ 1 + (1|hospital), data = data_surgeryB_with_predicted)
+
+TSS = sum((data_surgeryB_with_predicted$pain - predict(mod_mean))^2)
+TSS  #484.5061
+
+R_squared = 1 - (RSS/TSS)
+R_squared  # R^2 = 0.3657
+#This means that by using the regression model, we are able to explain 36.57% of the variability in the outcome on data B.
+#36.57% of variability of the outcome is predicted by the predictors
+
+#compare the R^2 of data B with marginal and conditional R^2 of data A
+#dataB: R^2 of dataB = 0.3657; dataA: the marginal R^2 of = 0.3852, the conditional R^2 = 0.4632
+
+```
+
+#build a new linear mixed effects model on datasetA predicting pain
+#using the most influencial fixed effect predictor -- serum cortisol level
+```{r}
+#plot the regression lines for the hospitals separately
+data_surgeryA %>%
+  ggplot() + aes(y=pain, x=cortisol_serum, color = hospital) + geom_point(size =3) + geom_smooth(method = "lm", se = F, fullrange = TRUE) + xlim(0, 10) + geom_hline(yintercept = 0) + geom_vline(xintercept = 0)
+#it seems that the random effect predictor, hospital, has an effect on both the mean of the outcome pain (intercept), and the effect of the fixed effect predictor serum cortisol (slope).
+
+```
+
+```{r}
+#run both random intercept and random slope models
+#new random intercept model
+mod_new_int = lmer(pain ~ cortisol_serum + (1|hospital), data = data_surgeryA)
+
+#new random slope model
+mod_new_slope = lmer(pain ~ cortisol_serum + (cortisol_serum|hospital), data = data_surgeryA) 
+summary(mod_new_slope)
+#singular fit error: I checked online, and many people suggest to remove higher-order random effects, but my random effects structure is not complex at all, so maybe it's the overfitting problem. Then I found a solution which had similar result without singular fit problem: https://www.py4u.net/discuss/879723
+
+library(nlme)
+mod_new_slope_test = lme(pain ~ cortisol_serum, data = data_surgeryA, random = ~ cortisol_serum|hospital, control = lmeControl(opt = "optim"))  #so I'll use this one instead of the original random slope model
+
+summary(mod_new_int)
+summary(mod_new_slope_test)
+
+
+data_surgeryA_withpreds = data_surgeryA %>%
+  mutate(pred_int = predict(mod_new_int), pred_slope = predict(mod_new_slope_test))
+View(data_surgeryA_withpreds)
+
+#regression lines of the intercept model for each hospital
+data_surgeryA_withpreds %>% ggplot() + aes(y=pain, x=cortisol_serum, group=hospital) + geom_point(aes(color=hospital), size=3) + geom_line(color="red", aes(y=pred_int, x=cortisol_serum)) + facet_wrap(~hospital, ncol = 5)
+```
+
+```{r}
+#regression lines of the slope model for each hospital
+data_surgeryA_withpreds %>% ggplot() + aes(y=pain, x=cortisol_serum, group=hospital) + geom_point(aes(color=hospital), size=3) + geom_line(color="red", aes(y=pred_slope, x=cortisol_serum)) + facet_wrap(~hospital, ncol = 5)
+
+#the difference between the predictions of the two models is unremarkable
+
+```
+
+```{r}
+#comparing model fit indices
+sum(residuals(mod_new_int)^2)  #RSS = 292.87
+sum(residuals(mod_new_slope_test)^2)  #RSS = 285.89
+
+cAIC(mod_new_int)$caic  #664.54
+cAIC(mod_new_slope_test)$caic  #681.61
+
+```
+
+
+```{r}
+#model coefficients and other statistics for fixed predictors of mod_new_int
+r2beta(mod_new_int, method = "nsj", data = data_surgeryA_withpreds)
+r.squaredGLMM(mod_new_int)
+confint(mod_new_int)
+stdCoef.merMod(mod_new_int)
+
+```
+
+
+```{r}
+# table for random intercept model
+sm = summary(mod_new_int)		
+sm_p_values = as.character(round(sm$coefficients[,"Pr(>|t|)"], 3))		
+sm_p_values[sm_p_values != "0" & sm_p_values != "1"] = substr(sm_p_values[sm_p_values != "0" & sm_p_values != "1"], 2, nchar(sm_p_values[sm_p_values != "0" & sm_p_values != "1"]))		
+sm_p_values[sm_p_values == "0"] = "<.001"		
+		
+coef_CI = suppressWarnings(confint(mod_new_int))		
+		
+sm_table = cbind(as.data.frame(round(cbind(as.data.frame(sm$coefficients[,"Estimate"]), coef_CI[c("(Intercept)", "cortisol_serum"),], c(0, stdCoef.merMod(mod_new_int)[2,1])), 2)), sm_p_values)		
+names(sm_table) = c("b", "95%CI lb", "95%CI ub", "Std.Beta", "p-value")		
+sm_table["(Intercept)","Std.Beta"] = "0"		
+sm_table		
+
+
+# table for random slope model:	
+sm = summary(mod_new_int)		
+sm_p_values = as.character(round(sm$coefficients[,"Pr(>|t|)"], 3))		
+sm_p_values[sm_p_values != "0" & sm_p_values != "1"] = substr(sm_p_values[sm_p_values != "0" & sm_p_values != "1"], 2, nchar(sm_p_values[sm_p_values != "0" & sm_p_values != "1"]))		
+sm_p_values[sm_p_values == "0"] = "<.001"		
+		
+coef_CI = suppressWarnings(confint(mod_new_int))		
+		
+sm_table = cbind(as.data.frame(round(cbind(as.data.frame(sm$coefficients[,"Estimate"]), coef_CI[c("(Intercept)", "cortisol_serum"),], c(0, stdCoef.merMod(mod_new_int)[2,1])), 2)), sm_p_values)		
+names(sm_table) = c("b", "95%CI lb", "95%CI ub", "Std.Beta", "p-value")		
+sm_table["(Intercept)","Std.Beta"] = "0"		
+sm_table	
+
+#table for comparison
+tab_model(mod_new_int, mod_new_slope_test)
+#table for random intercept model (another style)
+tab_model(mod_new_int, p.val = "kr", show.std = TRUE, show.ci = 0.95)
+
+```
+
+
+
