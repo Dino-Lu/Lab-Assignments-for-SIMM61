@@ -1,0 +1,527 @@
+---
+title: "Lab Report #1"
+author: "Jinxuan Lu"
+date: "2022/01/14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#import data and loading packages
+
+```{r}
+Sys.setenv(LANG="en")
+getwd()
+library(tidyverse)
+library(haven)
+library(dplyr)
+library(psych)
+library(knitr)
+library(pscl) # for pR2	
+library(lmtest) # for lrtest	
+library(dominanceanalysis) # for dominanceAnalysis
+
+#import data
+Titanic = read_csv("https://raw.githubusercontent.com/kekecsz/SIMM61-Course-materials/main/Home_assignment/Titanic%20-%20training%20set.csv")
+
+#check data
+str(Titanic)
+Titanic %>% summary()
+colSums(is.na(Titanic))
+colSums(Titanic=="")
+sapply(Titanic, function(x) length(unique(x)))  #check number of uniques values to find out columns which we can convert to factors
+
+
+#Data management; tidying up dataset, defining categorical variables as factors...
+Titanic <- Titanic %>% 	
+  mutate(Survived = factor(Survived),
+         Pclass = factor(Pclass),
+         Sex = factor(Sex),
+         Name = factor(Name),
+         Embarked = factor(Embarked),
+         Cabin = factor(Cabin),
+         Fare = as.numeric(round(Fare, digits = 2))) %>%
+  select(PassengerId, Survived, Pclass, Sex, Age, SibSp, Parch, Fare, Cabin, Embarked)
+
+View(Titanic)
+```
+
+#deal with missing values
+```{r}
+Titanic_data <- Titanic
+
+#dealing with "Embarked"
+Titanic_data[is.na(Titanic_data$Embarked),]   #the rows 62 and 830 were missing (checked online, the two persons were master and maid, both boarded at Southampton)
+Titanic_data$Embarked[which(is.na(Titanic_data$Embarked))] <- "S"
+Titanic_data[is.na(Titanic_data$Embarked),] 
+
+
+#dealing with "Cabin"
+#too much data is missing from cabin: don't know whether the data is simply missing, or people with cheap tickets didn't have cabins, so I replaced missing values with 0, and others with 1
+Titanic_data[is.na(Titanic_data$Cabin),] 
+Titanic_data <- Titanic_data %>%
+  mutate(Cabin = ifelse(is.na(Cabin), 0, 1))
+Titanic_data <- Titanic_data %>% 	
+  mutate(Cabin = factor(Cabin))
+
+
+#dealing with "Age" 
+#(I finally used Method 1 to deal with missing values in Age column)
+Titanic_data[is.na(Titanic_data$Age),]      #quite many rows as suggested above
+hist(Titanic$Age)
+
+#Method 1
+#calculate the mean and std of non-NA part
+mean <- mean(Titanic_data[["Age"]], na.rm = TRUE)
+std <- sd(Titanic_data[["Age"]], na.rm = TRUE)
+#replace NA with a list that maintain the mean and std
+temp_rnorm <- rnorm(sum(is.na(Titanic_data$Age)), mean = mean, sd = std)
+#replace NA with random list
+Titanic_data$Age <- ifelse(is.na(Titanic_data$Age), as.numeric(temp_rnorm), as.numeric(Titanic_data$Age))
+Titanic_data$Age <- round(Titanic_data$Age, 2)
+summary(Titanic_data$Age)
+#possible negative values, replace them with positive values
+Titanic_data$Age[(Titanic_data$Age)<=0] <- sample(Titanic_data$Age[Titanic_data$Age>0], length(Titanic_data$Age[(Titanic_data$Age)<=0]), replace=FALSE)
+summary(Titanic_data$Age)
+Titanic_data[is.na(Titanic_data$Age),]
+#(reference: https://bookdown.org/gmli64/do_a_data_science_project_in_10_days/dealt-with-miss-values.html)
+
+#Method 2 (not used)
+#Titanic_data$Age[is.na(Titanic_data$Age)] <- mean(Titanic_data$Age,na.rm=TRUE)
+#or
+#Titanic_data$Age[is.na(Titanic_data$Age)] <- median(Titanic_data$Age, na.rm = TRUE)
+#Method 3 (not used)
+#impute missing values by considering class, gender, and title
+
+#check dataset again
+Titanic_data <- Titanic_data %>%
+  select(Survived, Pclass, Sex, Age, SibSp, Parch, Fare, Cabin, Embarked)
+View(Titanic_data)
+str(Titanic_data)
+Titanic_data %>% summary()
+colSums(is.na(Titanic_data))
+
+```
+
+
+#exploratory data analysis with visualization
+```{r}
+#outcome variable will be "Survived", predictors can be: Pclass, Sex, Age, SibSp, Parch, Fare, Cabin, Embarked
+#checking plots of different variables
+Titanic_data %>% 	
+  ggplot() +	
+  aes(x = Survived) +	
+  geom_bar()	
+
+Titanic_data %>% 	
+  ggplot() +	
+  aes(x = Pclass) +	
+  geom_bar()	
+
+Titanic_data %>% 	
+  ggplot() +	
+  aes(x = Sex) +	
+  geom_bar()	
+
+Titanic_data %>% 	
+  ggplot() +	
+  aes(x = Cabin) +	
+  geom_bar()
+
+Titanic_data %>% 	
+  ggplot() +	
+  aes(x = Embarked) +	
+  geom_bar()
+
+```
+
+
+```{r}
+library(scales)
+#survival rate based on Pclass: first class had a higher survival rate, roughly 15% than the 2nd and 3rd
+ggplot(filter(Titanic_data, is.na(Survived)==FALSE), aes(Pclass, fill=Survived)) + 
+  geom_bar(aes(y = (..count..)/sum(..count..)), alpha=0.9, position="dodge") +
+  scale_fill_brewer(palette = "Dark2", direction = -1) +
+  scale_y_continuous(labels=percent, breaks=seq(0,0.6,0.05)) +
+  ylab("Percentage") + 
+  ggtitle("Survival Rate based on Pclass") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+Titanic_data %>% 	
+  group_by(Survived, Pclass) %>% 	
+  summarize(n = n()) %>% 	
+  spread(Survived, n)	
+```
+
+```{r}
+#survival rate based on Pclass & Sex: females had a higher survival rate than males in each class
+ggplot(filter(Titanic_data, is.na(Survived)==FALSE), aes(Sex, fill=Survived)) + 
+  geom_bar(aes(y = (..count..)/sum(..count..)), alpha=0.9) +
+  facet_wrap(~Pclass) + 
+  scale_fill_brewer(palette = "Dark2", direction = -1) +
+  scale_y_continuous(labels=percent, breaks=seq(0,0.4,0.05)) +
+  ylab("Percentage") + 
+  ggtitle("Survival Rate based on Pclass and Sex") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+```{r}
+#survival rate based on Pclass & Age: the passengers in the higher classes tend to be older disregard to whether they survived or not.
+ggplot(filter(Titanic_data, is.na(Survived)==FALSE), aes(Pclass, Age)) + 
+  geom_violin(aes(fill=Survived), alpha=0.9) +
+  facet_wrap(~Survived) + 
+  scale_fill_brewer(palette = "Dark2", direction = -1) +
+  ggtitle("Survival Rate based on Pclass and Age") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+```{r}
+#survival rate based on Fare & Embarked: there is a substantial variation of fares in the survived category, especially from Cherbourg and Southampton ports.
+ggplot(filter(Titanic_data, is.na(Survived)==FALSE), aes(Embarked, Fare)) + 
+  geom_boxplot(aes(fill=Survived), alpha=0.9) +
+  facet_wrap(~Survived) + 
+  scale_fill_manual(values=c("#56B4E9", "#CC79A7")) +
+  ggtitle("Survival Rate based on Embarked and Fare") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+#survival count based on number of siblings/partners: people with more siblings or partners had worse survival count than singletons
+Titanic_data %>% 	
+  group_by(Survived, SibSp) %>% 	
+  summarize(n = n()) %>% 	
+  spread(Survived, n)	
+
+Titanic_data %>% 	
+  ggplot() +	
+  aes(x = SibSp, fill = Survived) +	
+  geom_bar()
+```
+
+```{r}
+#survival count based on number of children/parents: people with no children or parents on board had higher rate of survival than people with children/parents
+Titanic_data %>% 	
+  group_by(Survived, Parch) %>% 	
+  summarize(n = n()) %>% 	
+  spread(Survived, n)	
+
+Titanic_data %>% 	
+  ggplot() +	
+  aes(x = Parch, fill = Survived) +	
+  geom_bar()
+```
+
+```{r}
+#survival rate based on Cabin: people who had cabin had a higher survival rate
+ggplot(filter(Titanic_data, is.na(Survived)==FALSE), aes(Cabin, fill=Survived)) + 
+  geom_bar(aes(y = (..count..)/sum(..count..)), alpha=0.9, position="dodge") +
+  scale_fill_brewer(palette = "Dark2", direction = -1) +
+  scale_y_continuous(labels=percent, breaks=seq(0,0.6,0.05)) +
+  ylab("Percentage") + 
+  ggtitle("Survival Rate based on Cabin") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+Titanic_data %>% 	
+  group_by(Survived, Cabin) %>% 	
+  summarize(n = n()) %>% 	
+  spread(Survived, n)	
+
+```
+
+```{r}
+#survival rate based on Cabin & Sex: females had a higher survival rate than males disregard to whether they have or not have a cabin
+ggplot(filter(Titanic_data, is.na(Survived)==FALSE), aes(Sex, fill=Survived)) + 
+  geom_bar(aes(y = (..count..)/sum(..count..)), alpha=0.9) +
+  facet_wrap(~Cabin) + 
+  scale_fill_brewer(palette = "Dark2", direction = -1) +
+  scale_y_continuous(labels=percent, breaks=seq(0,0.4,0.05)) +
+  ylab("Percentage") + 
+  ggtitle("Survival Rate based on Cabin and Sex") +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+
+```
+
+
+#using GLMs (general linear models: logistic) to check predictors: Pclass, Sex, Age, SibSp, Parch, Fare, Cabin, Embarked
+```{r}
+# Show the correlation of numeric features
+cor(Titanic_data[,unlist(lapply(Titanic_data,is.numeric))])  #the Multicollinearity does not exist among numeric features, since no correlation coefficient is greater than 0.7 or lesser than -0.7
+
+#recode several variables
+Titanic_data = Titanic_data %>%
+  mutate(Survived = factor(Survived, levels = c("0", "1")),
+         Sex = factor(Sex, levels = c("male", "female")))
+View(Titanic_data)
+
+#model with original variables
+mod = glm(Survived ~ Pclass + Sex + Age + SibSp + Parch + Fare + Cabin + Embarked, family = binomial (link = "logit"), data = Titanic_data)
+
+summary(mod)
+vif(mod)
+
+step_mod <- mod %>% stepAIC(trace = FALSE)
+coef(step_mod)
+
+#p value of some variables is greater than 0.05, so we cannot reject null hypothesis that there is no relation between survived and them. Thus, we need to accept the null hypothesis and discard these variables from analysis
+
+summary(step_mod)    #now we left with Pclass, Sex, Age, SibSp, Cabin, and Embarked
+
+```
+
+
+#However, the intercept value now is insignificant, and I'm very unsure about Cabin, since most of values in this column were empty originally, and I didn't know whether they were simply missing or they meant "no cabin", so I decided to remove Cabin too.
+```{r}
+#new final model
+mod1 = glm(Survived ~ Pclass + Sex + Age + SibSp + Embarked,
+           family = binomial(), data = Titanic_data)	
+
+summary(mod1)
+mod1 <- step(mod1)
+
+confint(mod1)
+exp(coefficients(mod1))
+exp(confint(mod1))
+
+vif(mod1)
+durbinWatsonTest(mod1)
+#The model looks good now. The standard errors are in a reasonable range. GVIF values are all less than 5. Furthermore, since Durbin-Watson test results with D-W Statistic 1.94 and p-value > 0.05, we do not reject H0:Residuals are not autocorrelated. Hence, we can conclude there is sufficient evidence to say residuals are not auto-correlated. The assumptions are checked and they are passed.
+
+anova(mod1, test = "Chisq")  # adding Pclass alone reduces the deviance drastically (i.e., from 1186.66 to 1083.11). 
+
+```
+
+#checking model performance
+```{r}
+predict(mod1)
+
+# McFadden R^2
+pR2(mod1)	   #llh = -397.94
+
+# -2LL, deviance	
+pR2(mod1)["llh"] * -2	
+(-397.94) * (-2) = 795.89    
+
+#(-2LL) shows the amount of error left after accounting for all of the variance explained by the predictors in our model, so, the lower this number the better the model fit is. 
+#(Conversely, the higher the log likelihood, the better the model fit).
+
+```
+
+#checking accuracy of model
+```{r}
+#1.Prediction accuracy for categorization
+Titanic_data = Titanic_data %>% 	
+  mutate(prediction_mod = predict(mod1)) %>% 	
+  mutate(prediction_mod = case_when(prediction_mod <= 0 ~ "0",	
+                               prediction_mod > 0 ~ "1"))	
+View(Titanic_data)      #"log(odds) <0" = "Odds < 1" = "probability < 50%"
+
+Titanic_data = Titanic_data %>%	
+  mutate(correct_prediction = case_when(prediction_mod == Survived ~ "correct",	
+                                        prediction_mod != Survived ~ "incorrect"))
+View(Titanic_data)
+
+# correct categorization rate overall	
+Titanic_data %>%	
+  group_by(correct_prediction) %>%	
+  summarise(count = n()) %>%	
+  mutate(freq = count / sum(count))	  #79.35%
+```
+
+```{r}
+#2.Prediction accuracy by outcome category
+#evaluate the model's performance relative to how accurate **a model would be which does not use any predictors**.	
+mod_null = glm(Survived ~ 1, 
+               family = binomial(), data = Titanic_data)	
+summary(mod_null)	 
+head(predict(mod_null))	       #since 342 (38%) people survived and 549 (62%) did not survived, the odds of survival vs. dead is 0.62, log(0.62) = -0.48. This is the number that will be used in our logistic regression model as a predicted outcome.
+
+# percentage of surviving: prediction result of original data
+Titanic_data %>%	
+  group_by(Survived) %>%	
+  summarise(count = n())  %>%	
+  mutate(freq = count / sum(count))	
+
+# crosstab of Survived and predicted values	
+Titanic_data %>% 	
+  group_by(Survived, prediction_mod) %>% 	
+  summarize(n = n()) %>% 	
+  spread(Survived, n)	
+
+# correctly categorized as having survived: prediction result of my model
+Titanic_data %>%	
+  filter(Survived == "1") %>% 	
+  group_by(correct_prediction) %>%	
+  summarise(count = n()) %>%	 
+  mutate(freq = count / sum(count))	     #69.88%, which did not reach the goal of the assignment
+
+# correctly categorized as having not survived: prediction result of my model
+Titanic_data %>%	
+  filter(Survived == "0") %>% 	
+  group_by(correct_prediction) %>%	
+  summarise(count = n()) %>%	
+  mutate(freq = count / sum(count))	   #85.25%
+
+```
+
+```{r}
+#1`2`. Fine-tune 
+Titanic_data = Titanic_data %>% 	
+  mutate(prediction_mod_tuned = predict(mod1)) %>% 	
+  mutate(prediction_mod_tuned = case_when(prediction_mod_tuned <= -0.4 ~ "0",	
+                                           prediction_mod_tuned > -0.4 ~ "1"))	
+View(Titanic_data)
+
+# coding correct guesses	
+Titanic_data = Titanic_data %>%	
+  mutate(correct_prediction_tuned = case_when(prediction_mod_tuned == Survived ~ "correct",	
+                                              prediction_mod_tuned != Survived ~ "incorrect"))	
+View(Titanic_data)
+
+# correct categorization rate overall	
+Titanic_data %>%	
+  group_by(correct_prediction_tuned) %>%	
+  summarise(count = n()) %>%	
+  mutate(freq = count / sum(count))	    #78.68%
+
+# crosstab of survival status and predicted values	
+Titanic_data %>% 	
+  group_by(Survived, prediction_mod_tuned) %>% 	
+  summarize(n = n()) %>% 	
+  spread(Survived, n)	
+
+# correctly categorized as survived	
+Titanic_data %>%	
+  filter(Survived == "1") %>% 	
+  group_by(correct_prediction_tuned) %>%	
+  summarise(count = n()) %>%	
+  mutate(freq = count / sum(count))	  #74.56%
+
+# correctly categorized as not survived	
+Titanic_data %>%	
+  filter(Survived == "0") %>% 	
+  group_by(correct_prediction_tuned) %>%	
+  summarise(count = n()) %>%	
+  mutate(freq = count / sum(count))	  #81.24%
+```
+
+
+#check whether the model significanly better than the null model (comparison)
+```{r}
+#If this is significant, the models are significantly different from each other in prediction accuracy. The model with the higher LogLikelihood has the better fit
+lrtest(mod_null, mod1)    #mod_null: -593.33;  mod1: -397.94
+
+#AIC of mod1 is lower more than 2 points than the null model, so mod1 is significantly better than the null model
+AIC(mod_null, mod1)     #mod_null: 1188.66;  mod1: 811.89
+
+# McFadden R^2 of null model
+pR2(mod_null)	   #llh = -593.33
+# -2LL, deviance of null model
+pR2(mod_null)["llh"] * (-2)	
+(-593.33) * (-2) = 1186.66 
+
+#for interpretation
+summary(mod1)
+confint(mod1)
+```
+
+#relative contribution of predictors
+```{r}
+#relative contribution of predictors to the model
+dominance_mod <- dominanceAnalysis(mod1)
+
+#influence of adding the different predictors to our models when we have different levels of model complexity
+contributionByLevel(dominance_mod, fit.functions = "r2.m")   #r2.m = McFadden R^2
+plot(dominance_mod, which.graph = "conditional", fit.function = "r2.m")
+
+#average influence of the predictors on the model fit
+averageContribution(dominance_mod,fit.functions = "r2.m")
+plot(dominance_mod, which.graph = "general", fit.function = "r2.m") + coord_flip()
+
+```
+
+
+#calculating Kate & Sue's survival rates with/without Leonardo
+#Sue & Kate: 3rd class tickets; 8 British Pounds each; no cabin; embarked in Southampton without Leonardo; Sue: 4 yrs,survived; Kate: 20 yrs, not survived
+
+#Survival rates of Kate
+```{r}
+#Without Leonardo
+Kate_without <- exp((1.10) + (-2.17) * 1 + 2.68 * 1 + (-0.03) * 20 + (-0.29) * 0 + (-0.46) * 1)
+ 
+Kate_without/(1+Kate_without)  #63.41%
+
+#With Leonardo
+Kate_with <- exp((1.10) + (-2.17) * 1 + 2.68 * 1 + (-0.03) * 20 + (-0.29) * 1 + (-0.46) * 1)
+ 
+Kate_with/(1+Kate_with)  #56.46%
+
+#alternative method
+#Kate_without1 = data.frame(Pclass = "3", Sex = "female", Age = 20, SibSp = 0, Embarked = "S") 
+#K_exp = exp(predict(mod1, newdata = Kate_without1))
+#K_exp/(1+K_exp) 
+
+#Kate_with1 = data.frame(Pclass = "3", Sex = "female", Age = 20, SibSp = 1, Embarked = "S") 
+#K_exp1 = exp(predict(mod1, newdata = Kate_with1))
+#K_exp1/(1+K_exp1) 
+
+```
+
+#Survival rates of Sue
+```{r}
+#Without Leonardo
+Sue_without <- exp((1.10) + (-2.17) * 1 + 2.68 * 1 + (-0.03) * 4 + (-0.29) * 0 + (-0.46) * 1)
+ 
+Sue_without/(1+Sue_without)  #73.69%
+
+#With Leonardo
+Sue_with <- exp((1.10) + (-2.17) * 1 + 2.68 * 1 + (-0.03) * 4 + (-0.29) * 0 + (-0.46) * 1)
+ 
+Sue_with/(1+Sue_with)  #73.69%   #no change at all, cause there is no influence from the number of parents
+
+#alternative method
+#Sue_without1 = data.frame(Pclass = "3", Sex = "female", Age = 4, SibSp = 0, Embarked = "S") 
+#S_exp = exp(predict(mod1, newdata = Sue_without1))
+#S_exp/(1+S_exp) 
+
+#Sue_with1 = data.frame(Pclass = "3", Sex = "female", Age = 4, SibSp = 0, Embarked = "S") 
+#S_exp1 = exp(predict(mod1, newdata = Sue_with1))
+#S_exp1/(1+S_exp1) 
+
+```
+
+
+#making tables for lab report
+```{r}
+library(sjPlot)
+library(sjmisc)
+library(sjlabelled)
+tab_model(mod1, mod_null, show.ci = 0.95, show.aic = TRUE, show.loglik = TRUE, show.r2 = FALSE, show.dev = TRUE, show.)
+
+
+#other methods:
+# library(gtsummary)
+#mod1 %>% 
+#  tbl_regression(intercept = TRUE) %>% 
+#  add_global_p() %>%
+#  bold_labels() %>%
+#  italicize_levels() %>%
+#  add_glance_table(include = c(AIC))
+
+# library(apaTables)
+# apa.reg.table(mod1, mod_null)
+
+#I also tried papaja package, but unfortunately, it didn't work in the version of R that I'm using
+```
+
