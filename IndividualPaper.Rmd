@@ -1,0 +1,396 @@
+---
+title: "Paper"
+author: "Jinxuan Lu"
+date: "11/28/2021"
+output:
+  html_document: 
+    df_print: paged
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+```
+
+#import data and loading packages
+
+```{r}
+Sys.setenv(LANG="en")
+getwd()
+library(tidyverse)
+library(haven)
+library(dplyr)
+library(psych)
+library(knitr)
+
+#import data
+#ESS8 <- read_sav("Desktop/MyProject/ESS8e02_2.sav")
+ESS8 <- read_sav("/Users/dinolu/Desktop/Finished courses/SIMM61-Quantitative Data Analysis in R/Individual paper相关/ESS8e02_2.sav")
+
+#look at the data
+View(ESS8)
+unique(ESS8$cntry)
+
+# Filter data by age range
+ESS8_sample <- ESS8 %>% 
+  filter(agea<=80 & agea >= 15)
+View(ESS8_sample)
+```
+
+#mutate and select variables that fit for my research
+
+```{r}
+#Mutate and select variables
+ESS8_Selected <- ESS8_sample %>%
+  mutate(Age = as.numeric(agea),
+         Gender = as_factor(gndr),
+         Manage_income = as_factor(hincfel),
+         Live_with_partner = as_factor(icpart2),
+         Live_with_children = as_factor(chldhm),
+         Work_agency_type = as_factor(tporgwk),
+         Domicile = as_factor(domicil),
+         Climate_change_concern = as.numeric(wrclmch),
+         Self_efficacy = as.numeric(ownrdcc),
+         Collective_efficacy = as.numeric(lkredcc),
+         Generalized_trust = as.numeric(lklmten),
+         Institutional_trust = as.numeric(gvsrdcc),
+         Personal_norm = as.numeric(ccrdprs)) %>%
+  select(Age,
+         Gender,
+         Manage_income,
+         Live_with_partner,
+         Live_with_children,
+         Work_agency_type,
+         Domicile,
+         Climate_change_concern,
+         Self_efficacy,
+         Collective_efficacy,
+         Generalized_trust,
+         Institutional_trust,
+         Personal_norm) %>% filter(Climate_change_concern<6, Self_efficacy<50, Collective_efficacy<50, Generalized_trust<50, Institutional_trust<50, Personal_norm<50)
+
+view(ESS8_Selected)
+
+
+#remove missing values
+ESS8_Selected <- drop_na(ESS8_Selected)
+view(ESS8_Selected)
+```
+
+#deal with categorical control variables in advance
+
+```{r}
+# Reduce the number of categories in a factor
+ESS8_Selected <- ESS8_Selected %>% 
+  mutate(Work_agency_type = fct_collapse(Work_agency_type,
+                                  gov = c("Central or local government",
+                                          "Other public sector (such as education and health)"),
+                                  ente = c("A state owned enterprise",
+                                           "A private firm"),
+                                  other = c("Self employed",
+                                            "Other")),
+         Domicile = fct_collapse(Domicile, 
+                                BC = c("A big city",
+                                       "Suburbs or outskirts of big city"), 
+                                Other = c("Town or small city", 
+                                          "Country village", 
+                                          "Farm or home in countryside")),
+         Manage_income = fct_collapse(Manage_income, 
+                                      Manage = c("Living comfortably on present income",
+                                                 "Coping on present income"),
+                                      Not = c("Difficult on present income",
+                                              "Very difficult on present income"))) 
+view(ESS8_Selected)
+```
+
+#set different dummy variables
+
+```{r}
+# Relevel to set reference category
+ESS8_Selected <- ESS8_Selected %>% 
+  mutate(Gender = fct_relevel(Gender, "Female"),
+         Live_with_partner = fct_relevel(Live_with_partner, "Does not"),
+         Live_with_children = fct_relevel(Live_with_children, "Does not"),
+         Work_agency_type = fct_relevel(Work_agency_type, "other"),
+         Manage_income = fct_relevel(Manage_income, "Not"),
+         Domicile = fct_relevel(Domicile, "Other"))
+view(ESS8_Selected)
+```
+
+#index is not available in my study, so no index included. 
+#test bivariate model
+
+```{r}
+# Bivariate model 
+mod1 <- lm(Personal_norm ~ Collective_efficacy,
+           data = ESS8_Selected)
+
+summary(mod1)
+```
+
+#add control variables
+
+```{r}
+# Model with dummies
+mod2 <- lm(Personal_norm ~ Collective_efficacy +
+             Age +
+             Gender +
+             Manage_income +
+             Live_with_partner +
+             Live_with_children +
+             Work_agency_type +
+             Domicile +
+             Climate_change_concern +
+             Self_efficacy, 
+           data = ESS8_Selected)
+
+summary(mod2)
+```
+
+#adding interaction terms to execute moderating analysis
+
+```{r}
+# Model with interaction effects
+# moderator 1: Generalized trust
+mod3 <- lm(Personal_norm ~ Collective_efficacy +
+             Age +
+             Gender +
+             Manage_income +
+             Live_with_partner +
+             Live_with_children +
+             Work_agency_type +
+             Domicile +
+             Climate_change_concern +
+             Self_efficacy +
+             Generalized_trust +
+             Collective_efficacy * Generalized_trust,
+           data = ESS8_Selected)
+
+summary(mod3)
+```
+
+#adding interaction terms to execute moderating analysis
+
+```{r}
+# Model with interaction effects
+# moderator 2: Institutional trust
+mod4 <- lm(Personal_norm ~ Collective_efficacy +
+             Age +
+             Gender +
+             Manage_income +
+             Live_with_partner +
+             Live_with_children +
+             Work_agency_type +
+             Domicile +
+             Climate_change_concern +
+             Self_efficacy +
+             Institutional_trust +
+             Collective_efficacy * Institutional_trust,
+           data = ESS8_Selected)
+
+summary(mod4) 
+#now it seems only moderator 1 (mod3) plays a role
+```
+
+#run plots to check my models
+
+```{r}
+# Detecting influential outliers
+plot(mod3)
+```
+
+#deal with outliers
+
+```{r}
+# display and exclude the outlier cases through Cook's D
+# I searched and found that a general rule of thumb is to investigate any point that is more than 3*mean of all the distances
+CooksD <- cooks.distance(mod3)
+influential <- CooksD[(CooksD > (3 * mean(CooksD, na.rm = TRUE)))]
+
+names_of_influential <- names(influential)
+outliers <- ESS8_Selected[names_of_influential,]
+ESS8_Selected_without_outliers <- ESS8_Selected %>% anti_join(outliers)
+view(ESS8_Selected_without_outliers)
+#A new final sample called ESS8_Selected_without_outliers including 31670 cases.
+```
+
+#official analysis with final sample data \#means, standard deviation, and correlation among numeric variables
+
+```{r}
+library(gtsummary)
+ESS8_Selected_without_outliers %>% tbl_summary()
+library(apaTables)
+apa.cor.table(ESS8_Selected_without_outliers,
+              show.conf.interval = TRUE,
+              show.sig.stars = TRUE,
+              landscape = TRUE)
+```
+
+#visualize the focal variables
+
+```{r}
+# Plot focal X
+ggplot(ESS8_Selected_without_outliers, aes(Collective_efficacy)) + 
+  geom_histogram() +
+  theme_classic() + 
+  ggtitle("Focal Predictor Variable")
+
+# Summary stats for focal X 
+summary(ESS8_Selected_without_outliers$Collective_efficacy)
+```
+
+```{r}
+# Plot focal Y
+ggplot(ESS8_Selected_without_outliers, aes(Personal_norm)) + 
+  geom_histogram() +
+  theme_classic() + 
+  ggtitle("Focal Outcome Variable")
+
+# Summary stats for focal X 
+summary(ESS8_Selected_without_outliers$Personal_norm)
+```
+
+#look at the whole picture
+
+```{r}
+library(skimr)
+skim(ESS8_Selected_without_outliers) 
+```
+
+#rerun the models
+
+```{r}
+# model 1, focal relationship
+mod1 <- lm(Personal_norm ~ Collective_efficacy,
+           data = ESS8_Selected_without_outliers)
+summary(mod1)
+
+```
+
+```{r}
+# model 2, adding control variables into focal relationship
+mod2 <- lm(Personal_norm ~ Collective_efficacy +
+             Age +
+             Gender +
+             Manage_income +
+             Live_with_partner +
+             Live_with_children +
+             Work_agency_type +
+             Domicile +
+             Climate_change_concern +
+             Self_efficacy, 
+           data = ESS8_Selected_without_outliers)
+summary(mod2)
+```
+
+```{r}
+# model 3 with interaction effects
+# moderator 1: Generalized Trust
+mod3 <- lm(Personal_norm ~ Collective_efficacy +
+             Age +
+             Gender +
+             Manage_income +
+             Live_with_partner +
+             Live_with_children +
+             Work_agency_type +
+             Domicile +
+             Climate_change_concern +
+             Self_efficacy +
+             Generalized_trust +
+             Collective_efficacy * Generalized_trust,
+           data = ESS8_Selected_without_outliers)
+summary(mod3)
+```
+
+```{r}
+# model 4 with interaction effects
+# moderator 2: Institutional Trust
+mod4 <- lm(Personal_norm ~ Collective_efficacy +
+             Age +
+             Gender +
+             Manage_income +
+             Live_with_partner +
+             Live_with_children +
+             Work_agency_type +
+             Domicile +
+             Climate_change_concern +
+             Self_efficacy +
+             Institutional_trust +
+             Collective_efficacy * Institutional_trust,
+           data = ESS8_Selected_without_outliers)
+summary(mod4) 
+```
+
+#exclude the independent variable and only include control variables to get the delta R2
+
+```{r}
+mod5 <- lm(Personal_norm ~ Age +
+             Gender +
+             Manage_income +
+             Live_with_partner +
+             Live_with_children +
+             Work_agency_type +
+             Domicile +
+             Climate_change_concern +
+             Self_efficacy, 
+           data = ESS8_Selected_without_outliers)
+summary(mod5)
+```
+
+#visualize the final model
+
+```{r}
+library(visreg)
+#visualize focal relationship
+visreg(mod2, "Collective_efficacy", 
+       ylab = "Personal Norm toward Climate Change", 
+       xlab = "Collective Efficacy Belief", 
+       gg = TRUE, # creating a ggplot
+       band = TRUE) + 
+  theme_classic() + 
+  ggtitle("Final focal model")
+
+```
+
+```{r}
+# visualize moderation relationship
+visreg(mod3, "Collective_efficacy", by = "Generalized_trust", 
+                      overlay = TRUE,
+                      ylab = "Personal Norm toward Climate Change", 
+                      xlab = "Collective Efficacy Belief",
+                      legend = FALSE,
+                      gg = TRUE, 
+       band = FALSE) + 
+  theme_classic() + 
+  ggtitle("Final model 1: The interaction effect of collective efficacy and generalized trust")
+
+library(interactions)
+interact_plot(mod3, pred = Collective_efficacy, modx = Generalized_trust)
+#it seems the latter plot is better for continuous moderators
+```
+
+```{r}
+# visualize moderation relationship
+visreg(mod4, "Collective_efficacy", by = "Institutional_trust", 
+                      overlay = TRUE,
+                      ylab = "Personal Norm toward Climate Change", 
+                      xlab = "Collective Efficacy Belief",
+                      legend = FALSE,
+                      gg = TRUE, 
+       band = FALSE) + 
+  theme_classic() + 
+  ggtitle("Final model 2: The interaction effect of collective efficacy and institutional trust")
+
+interact_plot(mod4, pred = Collective_efficacy, modx = Institutional_trust)
+
+```
+
+#model summary
+
+```{r}
+library(modelsummary)
+msummary(list(mod1, mod2, mod3, mod4, mod5), # List the models to include
+         stars = TRUE, statistic = NULL)
+
+```
+
